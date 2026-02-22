@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/arthurnagem/gator/internal/config"
 	"github.com/arthurnagem/gator/internal/database"
+	"github.com/arthurnagem/gator/internal/rss"
 )
 type state struct {
 	db  *database.Queries
@@ -119,6 +120,18 @@ func handlerUsers(s *state, cmd command) error {
 	return nil
 }
 
+func handlerAgg(s *state, cmd command) error {
+	ctx := context.Background()
+
+	feed, err := rss.FetchFeed(ctx, "https://www.wagslane.dev/index.xml")
+	if err != nil {
+		fmt.Println("error fetching feed:", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("%+v\n", feed)
+	return nil
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -153,7 +166,7 @@ func main() {
 	cmds.register("register", handlerRegister)
 	cmds.register("reset", handlerReset)
 	cmds.register("users", handlerUsers)
-
+	cmds.register("agg", handlerAgg)
 
 	cmd := command{
 		name: os.Args[1],
