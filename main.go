@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -162,6 +163,16 @@ func handlerAddFeed(s *state, cmd command) error {
 		os.Exit(1)
 	}
 
+	_, err = s.db.CreateFeedFollow(ctx, database.CreateFeedFollowParams{
+		ID:        uuid.New(),
+		UserID:    user.ID,
+		FeedID:    feed.ID,
+	})
+	if err != nil {
+		fmt.Println("error creating feed follow:", err)
+		os.Exit(1)
+	}
+
 	fmt.Println("Feed created successfully:")
 	fmt.Println(feed)
 
@@ -186,6 +197,78 @@ func handlerFeeds(s *state, cmd command) error {
     }
 
     return nil
+}
+
+func handlerFollow(s *state, cmd command) error {
+	if len(cmd.args) != 1 {
+		fmt.Println("usage: follow <url>")
+		os.Exit(1)
+	}
+
+	url := cmd.args[0]
+
+	cfg, err := config.Read()
+	if err != nil {
+		return err
+	}
+
+	if cfg.CurrentUserName == "" {
+		return errors.New("no current user")
+	}
+
+	ctx := context.Background()
+
+	user, err := s.db.GetUser(ctx, cfg.CurrentUserName)
+	if err != nil {
+		return err
+	}
+
+	feed, err := s.db.GetFeedByURL(ctx, url)
+	if err != nil {
+		return err
+	}
+
+	follow, err := s.db.CreateFeedFollow(ctx, database.CreateFeedFollowParams{
+		ID:     uuid.New(),
+		UserID: user.ID,
+		FeedID: feed.ID,
+	})
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("%s is now following %s\n", follow.UserName, follow.FeedName)
+	return nil
+}
+
+func handlerFollowing(s *state, cmd command) error {
+	if len(cmd.args) != 0 {
+		fmt.Println("usage: following")
+		os.Exit(1)
+	}
+
+	cfg, err := config.Read()
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+
+	user, err := s.db.GetUser(ctx, cfg.CurrentUserName)
+	if err != nil {
+		return err
+	}
+
+	follows, err := s.db.GetFeedFollowsForUser(ctx, user.ID)
+	if err != nil {
+		return err
+	}
+
+	for _, f := range follows {
+		fmt.Printf("* %s\n", f.FeedName)
+	}
+
+	return nil
 }
 
 func main() {
@@ -224,6 +307,8 @@ func main() {
 	cmds.register("agg", handlerAgg)
 	cmds.register("addfeed", handlerAddFeed)
 	cmds.register("feeds", handlerFeeds)
+	cmds.register("follow", handlerFollow)
+	cmds.register("following", handlerFollowing)
 
 	cmd := command{
 		name: os.Args[1],
