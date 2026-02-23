@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"strconv"
+    "strings"
 	"fmt"
 	"os"
 	"time"
@@ -284,6 +286,36 @@ func handlerUnfollow(s *state, cmd command, user database.User) error {
 	return nil
 }
 
+func handlerBrowse(s *state, cmd command, user database.User) error {
+	limit := 2
+
+	if len(cmd.args) == 1 {
+		parsed, err := strconv.Atoi(cmd.args[0])
+		if err != nil {
+			return fmt.Errorf("limit must be a number")
+		}
+		limit = parsed
+	}
+
+	posts, err := s.db.GetPostsForUser(
+		context.Background(),
+		database.GetPostsForUserParams{
+			UserID: user.ID,
+			Limit:  int32(limit),
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	for _, post := range posts {
+		fmt.Printf("\n%s\n", post.Title)
+		fmt.Printf("%s\n", post.Url)
+	}
+
+	return nil
+}
+
 func middlewareLoggedIn(
 	handler func(s *state, cmd command, user database.User) error,
 ) func(*state, command) error {
@@ -328,8 +360,51 @@ func scrapeFeeds(s *state) {
 	}
 
 	for _, item := range feedData.Channel.Item {
-		fmt.Println(" -", item.Title)
+
+	publishedAt, err := parsePublishedAt(item.PubDate)
+	if err != nil {
+		fmt.Println("error parsing date:", err)
+		continue
 	}
+
+	err = s.db.CreatePost(ctx, database.CreatePostParams{
+		ID:          uuid.New(),
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+		Title:       item.Title,
+		Url:         item.Link,
+		Description: sql.NullString{String: item.Description, Valid: item.Description != ""},
+		PublishedAt: sql.NullTime{Time: publishedAt, Valid: !publishedAt.IsZero()},
+		FeedID:      feed.ID,
+	})
+
+	if err != nil {
+		// Ignore duplicate URL
+		if strings.Contains(err.Error(), "duplicate") {
+			continue
+		}
+		fmt.Println("error saving post:", err)
+	}
+}
+}
+
+func parsePublishedAt(dateStr string) (time.Time, error) {
+	layouts := []string{
+		time.RFC1123Z,
+		time.RFC1123,
+		time.RFC822Z,
+		time.RFC822,
+		time.RFC3339,
+	}
+
+	for _, layout := range layouts {
+		t, err := time.Parse(layout, dateStr)
+		if err == nil {
+			return t, nil
+		}
+	}
+
+	return time.Time{}, fmt.Errorf("could not parse date: %s", dateStr)
 }
 
 func main() {
@@ -371,6 +446,7 @@ func main() {
 	cmds.register("follow", middlewareLoggedIn(handlerFollow))
 	cmds.register("following", middlewareLoggedIn(handlerFollowing))
 	cmds.register("unfollow", middlewareLoggedIn(handlerUnfollow))
+	cmds.register("browse", middlewareLoggedIn(handlerBrowse))
 
 	cmd := command{
 		name: os.Args[1],
