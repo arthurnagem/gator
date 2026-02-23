@@ -122,16 +122,25 @@ func handlerUsers(s *state, cmd command) error {
 }
 
 func handlerAgg(s *state, cmd command) error {
-	ctx := context.Background()
-
-	feed, err := rss.FetchFeed(ctx, "https://www.wagslane.dev/index.xml")
-	if err != nil {
-		fmt.Println("error fetching feed:", err)
-		os.Exit(1)
+	if len(cmd.args) != 1 {
+		return fmt.Errorf("usage: agg <time_between_reqs>")
 	}
 
-	fmt.Printf("%+v\n", feed)
-	return nil
+	durationStr := cmd.args[0]
+
+	timeBetweenRequests, err := time.ParseDuration(durationStr)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("Collecting feeds every", timeBetweenRequests)
+
+	ticker := time.NewTicker(timeBetweenRequests)
+	defer ticker.Stop()
+
+	for ; ; <-ticker.C {
+		scrapeFeeds(s)
+	}
 }
 
 func handlerAddFeed(s *state, cmd command, user database.User) error {
@@ -292,6 +301,34 @@ func middlewareLoggedIn(
 		}
 
 		return handler(s, cmd, user)
+	}
+}
+
+func scrapeFeeds(s *state) {
+	ctx := context.Background()
+
+	feed, err := s.db.GetNextFeedToFetch(ctx)
+	if err != nil {
+		fmt.Println("error getting next feed:", err)
+		return
+	}
+
+	fmt.Println("Fetching feed:", feed.Name)
+
+	err = s.db.MarkFeedFetched(ctx, feed.ID)
+	if err != nil {
+		fmt.Println("error marking feed fetched:", err)
+		return
+	}
+
+	feedData, err := rss.FetchFeed(ctx, feed.Url)
+	if err != nil {
+		fmt.Println("error fetching feed:", err)
+		return
+	}
+
+	for _, item := range feedData.Channel.Item {
+		fmt.Println(" -", item.Title)
 	}
 }
 
